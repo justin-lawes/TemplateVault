@@ -5,7 +5,7 @@
  * Install: copy to After Effects/Scripts/ScriptUI Panels/
  * Access:  AE → Window → TemplateVault
  *
- * Templates and destinations are saved in ~/Documents/TemplateVault/TemplateVault_data.json
+ * Data file: ~/Documents/TemplateVault/TemplateVault_data.json
  *
  * Load Copy: if a destination is selected, copies there immediately — no dialog.
  *            If no destination is selected, opens a folder picker and offers to save it.
@@ -102,6 +102,12 @@
         return name.replace(/[\/\\:*?"<>|]/g, '_');
     }
 
+    function swapItems(arr, i, j) {
+        var tmp = arr[i];
+        arr[i]  = arr[j];
+        arr[j]  = tmp;
+    }
+
     // ── Build UI ──────────────────────────────────────────────────────────────
 
     var panel = (thisObj instanceof Panel)
@@ -113,7 +119,8 @@
     panel.margins       = 10;
     panel.spacing       = 8;
 
-    // — Templates section —
+    // ── Templates section ─────────────────────────────────────────────────────
+
     var tplSection = panel.add('panel', undefined, 'Templates');
     tplSection.orientation   = 'column';
     tplSection.alignChildren = ['fill', 'top'];
@@ -125,28 +132,48 @@
     listbox.preferredSize = [240, 130];
     listbox.alignment     = ['fill', 'fill'];
 
+    // Row 1: primary action + reveal
     var tplRow1 = tplSection.add('group');
     tplRow1.orientation   = 'row';
     tplRow1.alignChildren = ['fill', 'center'];
     tplRow1.alignment     = ['fill', 'bottom'];
 
-    var btnLoad = tplRow1.add('button', undefined, 'Load Copy');
-    btnLoad.helpTip = 'Copy template to selected destination and open it (or browse if none selected)';
+    var btnLoad   = tplRow1.add('button', undefined, 'Load Copy');
+    var btnReveal = tplRow1.add('button', undefined, 'Reveal');
 
+    btnLoad.helpTip   = 'Copy template to selected destination and open it (or browse if none selected)';
+    btnReveal.helpTip = 'Show template file in Finder';
+
+    // Row 2: add / remove
     var tplRow2 = tplSection.add('group');
     tplRow2.orientation   = 'row';
     tplRow2.alignChildren = ['fill', 'center'];
     tplRow2.alignment     = ['fill', 'bottom'];
 
-    var btnAdd        = tplRow2.add('button', undefined, 'Add');
-    var btnAddOpen    = tplRow2.add('button', undefined, 'Add Open');
-    var btnRemove     = tplRow2.add('button', undefined, 'Remove');
+    var btnAdd     = tplRow2.add('button', undefined, 'Add');
+    var btnAddOpen = tplRow2.add('button', undefined, 'Add Open');
+    var btnRemove  = tplRow2.add('button', undefined, 'Remove');
 
     btnAdd.helpTip     = 'Browse for an .aep file and add it as a template';
     btnAddOpen.helpTip = 'Add the currently open project as a template';
     btnRemove.helpTip  = 'Remove selected template from the vault (file is not deleted)';
 
-    // — Destinations section —
+    // Row 3: rename + reorder
+    var tplRow3 = tplSection.add('group');
+    tplRow3.orientation   = 'row';
+    tplRow3.alignChildren = ['fill', 'center'];
+    tplRow3.alignment     = ['fill', 'bottom'];
+
+    var btnRename   = tplRow3.add('button', undefined, 'Rename');
+    var btnMoveUp   = tplRow3.add('button', undefined, '↑');
+    var btnMoveDown = tplRow3.add('button', undefined, '↓');
+
+    btnRename.helpTip   = 'Rename selected template';
+    btnMoveUp.helpTip   = 'Move selected template up';
+    btnMoveDown.helpTip = 'Move selected template down';
+
+    // ── Destinations section ──────────────────────────────────────────────────
+
     var destSection = panel.add('panel', undefined, 'Destinations');
     destSection.orientation   = 'column';
     destSection.alignChildren = ['fill', 'top'];
@@ -155,66 +182,93 @@
     destSection.spacing       = 6;
 
     var destListbox = destSection.add('listbox', undefined, [], { multiselect: false });
-    destListbox.preferredSize = [240, 90];
+    destListbox.preferredSize = [240, 80];
     destListbox.alignment     = ['fill', 'fill'];
 
-    var destBtns = destSection.add('group');
-    destBtns.orientation   = 'row';
-    destBtns.alignChildren = ['fill', 'center'];
-    destBtns.alignment     = ['fill', 'bottom'];
+    var destRow = destSection.add('group');
+    destRow.orientation   = 'row';
+    destRow.alignChildren = ['fill', 'center'];
+    destRow.alignment     = ['fill', 'bottom'];
 
-    var btnAddDest      = destBtns.add('button', undefined, 'Add');
-    var btnRemoveDest   = destBtns.add('button', undefined, 'Remove');
-    var btnClearDest    = destBtns.add('button', undefined, 'Deselect');
+    var btnAddDest      = destRow.add('button', undefined, 'Add');
+    var btnRenameDest   = destRow.add('button', undefined, 'Rename');
+    var btnRemoveDest   = destRow.add('button', undefined, 'Remove');
+    var btnClearDest    = destRow.add('button', undefined, 'Clear');
 
     btnAddDest.helpTip    = 'Save a folder as a pinned destination';
+    btnRenameDest.helpTip = 'Rename selected destination';
     btnRemoveDest.helpTip = 'Remove selected destination (folder is not deleted)';
-    btnClearDest.helpTip  = 'Clear destination selection — Load Copy will use the folder picker instead';
+    btnClearDest.helpTip  = 'Clear selection — Load Copy will use the folder picker instead';
+
+    // ── Path display ──────────────────────────────────────────────────────────
+
+    var pathGroup = panel.add('group');
+    pathGroup.orientation   = 'row';
+    pathGroup.alignChildren = ['left', 'center'];
+    pathGroup.alignment     = ['fill', 'bottom'];
+    pathGroup.spacing       = 4;
+
+    var pathLabel = pathGroup.add('statictext', undefined, 'Path:');
+    pathLabel.minimumSize.width = 28;
+
+    var pathText = pathGroup.add('statictext', undefined, '');
+    pathText.alignment    = ['fill', 'center'];
+    pathText.justify      = 'left';
 
     // ── List refresh ──────────────────────────────────────────────────────────
 
-    function refreshList() {
-        var prevName = listbox.selection ? listbox.selection.text : null;
+    function updatePathDisplay() {
+        if (listbox.selection) {
+            pathText.text = templates[listbox.selection.index].path;
+        } else if (destListbox.selection) {
+            pathText.text = destinations[destListbox.selection.index].path;
+        } else {
+            pathText.text = '';
+        }
+    }
+
+    function refreshList(keepIdx) {
+        var idx = (keepIdx !== undefined) ? keepIdx
+                : listbox.selection ? listbox.selection.index : -1;
         listbox.removeAll();
         for (var i = 0; i < templates.length; i++) {
-            listbox.add('item', templates[i].name);
+            var exists = new File(templates[i].path).exists;
+            listbox.add('item', templates[i].name + (exists ? '' : ' [missing]'));
         }
-        if (prevName) {
-            for (var j = 0; j < listbox.items.length; j++) {
-                if (listbox.items[j].text === prevName) { listbox.selection = j; break; }
-            }
+        if (idx >= 0 && idx < listbox.items.length) {
+            listbox.selection = idx;
         }
+        updatePathDisplay();
     }
 
-    function refreshDestList() {
-        var prevName = destListbox.selection ? destListbox.selection.text : null;
+    function refreshDestList(keepIdx) {
+        var idx = (keepIdx !== undefined) ? keepIdx
+                : destListbox.selection ? destListbox.selection.index : -1;
         destListbox.removeAll();
         for (var i = 0; i < destinations.length; i++) {
-            destListbox.add('item', destinations[i].name);
+            var exists = new Folder(destinations[i].path).exists;
+            destListbox.add('item', destinations[i].name + (exists ? '' : ' [missing]'));
         }
-        if (prevName) {
-            for (var j = 0; j < destListbox.items.length; j++) {
-                if (destListbox.items[j].text === prevName) { destListbox.selection = j; break; }
-            }
+        if (idx >= 0 && idx < destListbox.items.length) {
+            destListbox.selection = idx;
         }
+        updatePathDisplay();
     }
 
-    // ── Handlers ──────────────────────────────────────────────────────────────
+    // ── Handlers: templates ───────────────────────────────────────────────────
 
     btnAdd.onClick = function () {
         var f = File.openDialog('Select an After Effects template file');
         if (!f) return;
         if (!/\.aepx?$/i.test(f.name)) {
-            alert('Please select an After Effects project file (.aep).');
+            alert('Please select an After Effects project file (.aep / .aepx).');
             return;
         }
-        var defaultName = f.name.replace(/\.aepx?$/i, '');
-        var name = prompt('Template name:', defaultName, 'Add Template');
+        var name = prompt('Template name:', f.name.replace(/\.aepx?$/i, ''), 'Add Template');
         if (!name || name === '') return;
         templates.push({ name: name, path: f.fsName });
         saveData();
-        refreshList();
-        listbox.selection = listbox.items.length - 1;
+        refreshList(templates.length - 1);
     };
 
     btnAddOpen.onClick = function () {
@@ -229,13 +283,10 @@
         var templateFile;
 
         if (app.project.file) {
-            // Already saved — use the current file path directly
             templateFile = app.project.file;
         } else {
-            // Unsaved — ask where to save it first
             var dest = File.saveDialog('Choose where to save this template');
             if (!dest) return;
-            // Ensure .aep extension if the user didn't type one
             var destPath = dest.fsName;
             if (!/\.aepx?$/i.test(destPath)) destPath += '.aep';
             app.project.save(new File(destPath));
@@ -248,51 +299,42 @@
 
         templates.push({ name: name, path: templateFile.fsName });
         saveData();
-        refreshList();
-        listbox.selection = listbox.items.length - 1;
+        refreshList(templates.length - 1);
     };
 
     btnLoad.onClick = function () {
-        if (!listbox.selection) {
-            alert('Select a template first.');
-            return;
-        }
+        if (!listbox.selection) { alert('Select a template first.'); return; }
+
         var idx = listbox.selection.index;
-        var tpl = templates[idx];
-        var src = new File(tpl.path);
+        var src = new File(templates[idx].path);
 
         if (!src.exists) {
-            alert('Template file not found:\n' + tpl.path + '\n\nYou may need to re-add it if it was moved.');
+            alert('Template file not found:\n' + templates[idx].path + '\n\nYou may need to re-add it if it was moved.');
             return;
         }
 
         var destFolder;
 
         if (destListbox.selection) {
-            // Use pinned destination — no dialog needed
-            var destIdx = destListbox.selection.index;
-            destFolder = new Folder(destinations[destIdx].path);
+            destFolder = new Folder(destinations[destListbox.selection.index].path);
             if (!destFolder.exists) {
-                alert('Destination folder not found:\n' + destinations[destIdx].path + '\n\nYou may need to re-add it.');
+                alert('Destination folder not found:\n' + destFolder.fsName + '\n\nYou may need to re-add it.');
                 return;
             }
         } else {
-            // No destination selected — fall back to folder picker
             destFolder = Folder.selectDialog('Choose folder for the new project');
             if (!destFolder) return;
-            // Offer to save it for next time
             if (confirm('Save "' + destFolder.name + '" as a destination?\n' + destFolder.fsName)) {
                 var destName = prompt('Destination name:', destFolder.name, 'Save Destination');
                 if (destName && destName !== '') {
                     destinations.push({ name: destName, path: destFolder.fsName });
                     saveData();
-                    refreshDestList();
-                    destListbox.selection = destListbox.items.length - 1;
+                    refreshDestList(destinations.length - 1);
                 }
             }
         }
 
-        var destPath = destFolder.fsName + '/' + sanitizeFilename(tpl.name) + '_' + getTimestamp() + '.aep';
+        var destPath = destFolder.fsName + '/' + sanitizeFilename(templates[idx].name) + '_' + getTimestamp() + '.aep';
 
         if (!src.copy(destPath)) {
             alert('Failed to copy the template file. Check that the destination folder is writable.');
@@ -302,17 +344,56 @@
         app.open(new File(destPath));
     };
 
-    btnRemove.onClick = function () {
-        if (!listbox.selection) {
-            alert('Select a template to remove.');
-            return;
+    btnReveal.onClick = function () {
+        if (!listbox.selection) { alert('Select a template first.'); return; }
+        var path = templates[listbox.selection.index].path;
+        var f = new File(path);
+        if (!f.exists) { alert('File not found:\n' + path); return; }
+        try {
+            system.callSystem('open -R "' + path.replace(/"/g, '\\"') + '"');
+        } catch (e) {
+            f.parent.execute(); // fallback: open containing folder
         }
+    };
+
+    btnRename.onClick = function () {
+        if (!listbox.selection) { alert('Select a template to rename.'); return; }
+        var idx  = listbox.selection.index;
+        var name = prompt('Rename template:', templates[idx].name, 'Rename Template');
+        if (!name || name === '') return;
+        templates[idx].name = name;
+        saveData();
+        refreshList(idx);
+    };
+
+    btnRemove.onClick = function () {
+        if (!listbox.selection) { alert('Select a template to remove.'); return; }
         var idx = listbox.selection.index;
         if (!confirm('Remove "' + templates[idx].name + '" from the vault?\n\nThe original file will not be deleted.')) return;
         templates.splice(idx, 1);
         saveData();
-        refreshList();
+        refreshList(Math.min(idx, templates.length - 1));
     };
+
+    btnMoveUp.onClick = function () {
+        if (!listbox.selection) return;
+        var idx = listbox.selection.index;
+        if (idx === 0) return;
+        swapItems(templates, idx, idx - 1);
+        saveData();
+        refreshList(idx - 1);
+    };
+
+    btnMoveDown.onClick = function () {
+        if (!listbox.selection) return;
+        var idx = listbox.selection.index;
+        if (idx === templates.length - 1) return;
+        swapItems(templates, idx, idx + 1);
+        saveData();
+        refreshList(idx + 1);
+    };
+
+    // ── Handlers: destinations ────────────────────────────────────────────────
 
     btnAddDest.onClick = function () {
         var f = Folder.selectDialog('Select a destination folder');
@@ -321,30 +402,40 @@
         if (!name || name === '') return;
         destinations.push({ name: name, path: f.fsName });
         saveData();
-        refreshDestList();
-        destListbox.selection = destListbox.items.length - 1;
+        refreshDestList(destinations.length - 1);
     };
 
-    btnClearDest.onClick = function () {
-        destListbox.selection = null;
+    btnRenameDest.onClick = function () {
+        if (!destListbox.selection) { alert('Select a destination to rename.'); return; }
+        var idx  = destListbox.selection.index;
+        var name = prompt('Rename destination:', destinations[idx].name, 'Rename Destination');
+        if (!name || name === '') return;
+        destinations[idx].name = name;
+        saveData();
+        refreshDestList(idx);
     };
 
     btnRemoveDest.onClick = function () {
-        if (!destListbox.selection) {
-            alert('Select a destination to remove.');
-            return;
-        }
+        if (!destListbox.selection) { alert('Select a destination to remove.'); return; }
         var idx = destListbox.selection.index;
         if (!confirm('Remove "' + destinations[idx].name + '" from destinations?\n\nThe folder itself will not be deleted.')) return;
         destinations.splice(idx, 1);
         saveData();
-        refreshDestList();
+        refreshDestList(Math.min(idx, destinations.length - 1));
     };
 
-    // Double-click shortcut for Load Copy
-    listbox.onDoubleClick = function () {
-        btnLoad.onClick();
+    btnClearDest.onClick = function () {
+        destListbox.selection = null;
+        updatePathDisplay();
     };
+
+    // ── Selection change → update path display ────────────────────────────────
+
+    listbox.onChange     = updatePathDisplay;
+    destListbox.onChange = updatePathDisplay;
+
+    // Double-click shortcut for Load Copy
+    listbox.onDoubleClick = function () { btnLoad.onClick(); };
 
     // ── Init ──────────────────────────────────────────────────────────────────
 
